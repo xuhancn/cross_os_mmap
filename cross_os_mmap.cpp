@@ -192,7 +192,7 @@ int dladdr(const void* addr, Dl_info* info) {
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &hModule) || hModule == NULL)
         return 0;
 
-    ret = GetModuleFileNameA(NULL, (LPSTR)&tpath, PATH_MAX);
+    ret = GetModuleFileNameA(hModule, (LPSTR)&tpath, PATH_MAX);
     if (!ret)
         return 0;
 
