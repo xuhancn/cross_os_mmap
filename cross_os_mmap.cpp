@@ -219,8 +219,112 @@ int dladdr(const void* addr, Dl_info* info) {
     return 1;
 }
 
+static DWORD get_creation_disposition(int flags) {
+    if (flags & O_CREAT) {
+        if (flags & O_EXCL)
+            return CREATE_NEW;
+        if (flags & O_TRUNC)
+            return CREATE_ALWAYS;
+        return OPEN_ALWAYS;
+    }
+    if (flags & O_TRUNC)
+        return TRUNCATE_EXISTING;
+    return OPEN_EXISTING;
+}
+
+#define O_ACCMODE 03
+#define O_RDONLY 00
+#define O_WRONLY 01
+#define O_RDWR 02
+
+static DWORD get_access_mode(int flags) {
+    switch (flags & O_ACCMODE) {
+    case O_RDONLY:
+        return GENERIC_READ;
+    case O_WRONLY:
+        return GENERIC_WRITE;
+    case O_RDWR:
+        return GENERIC_READ | GENERIC_WRITE;
+    default:
+        return GENERIC_READ;
+    }
+}
+#ifndef O_DSYNC
+#define O_DSYNC 00010000 /* used to be O_SYNC, see below */
+#endif
+
+#ifndef O_SYNC
+#define __O_SYNC 04000000
+#define O_SYNC (__O_SYNC | O_DSYNC)
+#endif
+
 int open(char* pathname, int flags) {
-    return 0;
+    DWORD dwDesiredAccess = get_access_mode(flags);
+    DWORD dwCreationDisposition = get_creation_disposition(flags);
+    DWORD dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+    DWORD dwFlagsAndAttributes = FILE_ATTRIBUTE_NORMAL;
+
+    // 处理同步标志
+    if (flags & O_SYNC) {
+        dwFlagsAndAttributes |= FILE_FLAG_WRITE_THROUGH;
+    }
+
+    // 处理顺序访问优化
+    if (flags & O_SEQUENTIAL) {
+        dwFlagsAndAttributes |= FILE_FLAG_SEQUENTIAL_SCAN;
+    }
+
+    // 处理随机访问优化
+    if (flags & O_RANDOM) {
+        dwFlagsAndAttributes |= FILE_FLAG_RANDOM_ACCESS;
+    }
+
+    HANDLE hFile = CreateFileA(
+        pathname,
+        dwDesiredAccess,
+        dwShareMode,
+        NULL,
+        dwCreationDisposition,
+        dwFlagsAndAttributes,
+        NULL);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        switch (GetLastError()) {
+        case ERROR_FILE_NOT_FOUND:
+            errno = ENOENT;
+            break;
+        case ERROR_PATH_NOT_FOUND:
+            errno = ENOTDIR;
+            break;
+        case ERROR_ACCESS_DENIED:
+            errno = EACCES;
+            break;
+        case ERROR_FILE_EXISTS:
+            errno = EEXIST;
+            break;
+        case ERROR_TOO_MANY_OPEN_FILES:
+            errno = EMFILE;
+            break;
+        default:
+            errno = EIO;
+        }
+        return -1;
+    }
+
+    // 转换为C运行时文件描述符
+    int fd = _open_osfhandle((intptr_t)hFile, flags);
+    if (fd == -1) {
+        CloseHandle(hFile);
+        errno = EMFILE;
+        return -1;
+    }
+
+    // 如果是追加模式，定位到文件末尾
+    if (flags & O_APPEND) {
+        lseek(fd, 0, SEEK_END);
+    }
+
+    return fd;
 }
 
 int close(int fd) {
@@ -235,7 +339,69 @@ void* mmap(
     int flags,
     int fd,
     off_t offset) {
-    return MAP_FAILED;
+    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        errno = EBADF;
+        return MAP_FAILED;
+    }
+
+    DWORD flProtect;
+    if (prot & PROT_WRITE) {
+        flProtect = PAGE_READWRITE;
+    }
+    else if (prot & PROT_READ) {
+        flProtect = PAGE_READONLY;
+    }
+    else {
+        flProtect = PAGE_NOACCESS;
+    }
+
+    flProtect = PAGE_READONLY;
+
+    DWORD dwDesiredAccess = 0;
+    if (prot & PROT_READ)
+        dwDesiredAccess |= FILE_MAP_READ;
+    if (prot & PROT_WRITE)
+        dwDesiredAccess |= FILE_MAP_WRITE;
+    if (prot & PROT_EXEC)
+        dwDesiredAccess |= FILE_MAP_EXECUTE;
+
+    dwDesiredAccess = FILE_MAP_READ;
+
+    HANDLE hMapping = CreateFileMapping(
+        hFile,
+        NULL,
+        flProtect,
+        (DWORD)((length >> 32) & 0xFFFFFFFF),
+        (DWORD)(length & 0xFFFFFFFF),
+        NULL);
+
+    if (!hMapping) {
+        DWORD dwErrCode = GetLastError();
+        errno = EACCES;
+        return MAP_FAILED;
+    }
+
+    // 映射视图
+    void* p = MapViewOfFileEx(
+        hMapping,
+        dwDesiredAccess,
+        (DWORD)((offset >> 32) & 0xFFFFFFFF),
+        (DWORD)(offset & 0xFFFFFFFF),
+        length,
+        addr);
+    if (!p) {
+        DWORD dwErrCode = GetLastError();
+        errno = EINVAL;
+    }
+
+    CloseHandle(hMapping);
+
+    if (!p) {
+        return MAP_FAILED;
+    }
+
+    return p;
 }
 
 int munmap(void* addr, size_t length) {
@@ -247,6 +413,10 @@ int munmap(void* addr, size_t length) {
 }
 
 #endif
+
+/*
+https://learn.microsoft.com/en-us/windows/win32/memory/creating-a-view-within-a-file
+*/
 
 int main()
 {
@@ -273,8 +443,12 @@ int main()
 
     auto weights_offset = fsize - ((unsigned char *)g_dummy_weight - (unsigned char *)dl_info.dli_fbase);
     
+#ifdef _WIN32
+    weights_offset = 0xC600;
+#else
     // 这个0x4000在Linux上是逆向出来的。
     weights_offset = 0x4000;
+#endif
     printf("!!! weights_offset: %p.\n", weights_offset);
 
     auto ptr = mmap(
