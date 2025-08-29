@@ -15,8 +15,8 @@
 #include <utility>
 
 // unsigned char g_big_array[2000000000] = {0};
-
-alignas(4096) unsigned char g_dummy_weight[16384] = {
+#define array_size 16384
+alignas(4096) unsigned char g_dummy_weight[array_size] = {
     1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,
     1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,
     1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,
@@ -368,12 +368,21 @@ void* mmap(
 
     dwDesiredAccess = FILE_MAP_READ;
 
+    SYSTEM_INFO SysInfo;
+    GetSystemInfo(&SysInfo);
+    DWORD dwSysGran = SysInfo.dwAllocationGranularity;
+
+    DWORD dwFileMapStart = (offset / dwSysGran) * dwSysGran;
+    DWORD dwMapViewSize = (offset % dwSysGran) + length;
+    DWORD dwFileMapSize = offset + length;
+    int iViewDelta = offset - dwFileMapStart;
+
     HANDLE hMapping = CreateFileMapping(
         hFile,
         NULL,
         flProtect,
-        (DWORD)((length >> 32) & 0xFFFFFFFF),
-        (DWORD)(length & 0xFFFFFFFF),
+        0,
+        dwFileMapSize,
         NULL);
 
     if (!hMapping) {
@@ -383,25 +392,27 @@ void* mmap(
     }
 
     // 映射视图
-    void* p = MapViewOfFileEx(
+    void* lpMapAddress = MapViewOfFileEx(
         hMapping,
         dwDesiredAccess,
-        (DWORD)((offset >> 32) & 0xFFFFFFFF),
-        (DWORD)(offset & 0xFFFFFFFF),
-        length,
+        0,
+        dwFileMapStart,
+        dwMapViewSize,
         addr);
-    if (!p) {
+    if (!lpMapAddress) {
         DWORD dwErrCode = GetLastError();
         errno = EINVAL;
     }
 
+    void* pData = (char*)lpMapAddress + iViewDelta;
+
     CloseHandle(hMapping);
 
-    if (!p) {
+    if (!lpMapAddress) {
         return MAP_FAILED;
     }
 
-    return p;
+    return pData;
 }
 
 int munmap(void* addr, size_t length) {
@@ -443,17 +454,17 @@ int main()
 
     auto weights_offset = fsize - ((unsigned char *)g_dummy_weight - (unsigned char *)dl_info.dli_fbase);
     
+    // In executable file, weights_offset is debugged via HEX editor.
 #ifdef _WIN32
     weights_offset = 0xC600;
 #else
-    // 这个0x4000在Linux上是逆向出来的。
     weights_offset = 0x4000;
 #endif
     printf("!!! weights_offset: %p.\n", weights_offset);
 
     auto ptr = mmap(
         NULL,
-        16384,
+        array_size,
         PROT_READ | PROT_WRITE,
         MAP_PRIVATE,
         fd,
@@ -464,6 +475,12 @@ int main()
     }
     printf("!!! ptr: %p.\n", ptr);
     close(fd);
+
+    unsigned char * p_mappped_data_0 =  (unsigned char *)ptr;
+    unsigned char * p_mappped_data_1 = p_mappped_data_0 + array_size - 1;
+
+    printf("!!! p_mappped_data[0]: %d.\n", *p_mappped_data_0);
+    printf("!!! p_mappped_data[array_size-1]: %d.\n", *p_mappped_data_1);
 
     return 0;
 }
