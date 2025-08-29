@@ -173,6 +173,9 @@ int main()
     printf("!!! fd - fsize: %d - %ld.\n", fd, fsize);
 
     auto weights_offset = fsize - ((unsigned char *)g_dummy_weight - (unsigned char *)dl_info.dli_fbase);
+    
+    // 这个0x4000在Linux上是逆向出来的。
+    weights_offset = 0x4000;
     printf("!!! weights_offset: %p.\n", weights_offset);
 
     auto ptr = mmap(
