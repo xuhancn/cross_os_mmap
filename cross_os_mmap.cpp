@@ -482,5 +482,7 @@ int main()
     printf("!!! p_mappped_data[0]: %d.\n", *p_mappped_data_0);
     printf("!!! p_mappped_data[array_size-1]: %d.\n", *p_mappped_data_1);
 
+    munmap((void*)ptr, array_size);
+
     return 0;
 }
