@@ -154,8 +154,6 @@ alignas(4096) unsigned char g_dummy_weight[array_size] = {
 #include <io.h>
 #include <sys/stat.h>
 
-#define PATH_MAX 255
-
 #define PROT_READ 0x1
 #define PROT_WRITE 0x2
 #define PROT_EXEC 0x4
@@ -169,7 +167,7 @@ alignas(4096) unsigned char g_dummy_weight[array_size] = {
 #define SEEK_END 2
 
 struct Dl_info {
-  char dli_fname[PATH_MAX]; /**< Filename of defining object */
+  char dli_fname[MAX_PATH]; /**< Filename of defining object */
   void* dli_fbase; /**< Load address of that object */
   const char* dli_sname; /**< Name of nearest lower symbol */
   void* dli_saddr; /**< Exact value of nearest symbol */
@@ -178,7 +176,7 @@ typedef struct Dl_info Dl_info;
 
 int dladdr(const void* addr, Dl_info* info) {
     // only returns filename, FWIW.
-    CHAR tpath[PATH_MAX];
+    CHAR tpath[MAX_PATH ];
     MEMORY_BASIC_INFORMATION mbi;
     char* path;
     char* tmp;
@@ -192,16 +190,16 @@ int dladdr(const void* addr, Dl_info* info) {
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &hModule) || hModule == NULL)
         return 0;
 
-    ret = GetModuleFileNameA(hModule, (LPSTR)&tpath, PATH_MAX);
+    ret = GetModuleFileNameA(hModule, (LPSTR)&tpath, MAX_PATH );
     if (!ret)
         return 0;
 
     path = tpath;
 
     length = strlen(path);
-    if (length >= PATH_MAX) {
-        length = PATH_MAX - 1;
-        path[PATH_MAX - 1] = '\0';
+    if (length >= MAX_PATH ) {
+        length = MAX_PATH  - 1;
+        path[MAX_PATH  - 1] = '\0';
     }
 
     /* replace '/' by '\' */
