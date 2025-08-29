@@ -147,14 +147,113 @@ alignas(4096) unsigned char g_dummy_weight[16384] = {
     1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,1,2,3,4,5,6,7,8,9,0,1,2,3,4,5,6,
 };
 
+#ifdef _WIN32
+#include <Windows.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
 
+#define PATH_MAX 255
+
+#define PROT_READ 0x1
+#define PROT_WRITE 0x2
+#define PROT_EXEC 0x4
+
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+#define MAP_FAILED ((void*)-1)
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+struct Dl_info {
+  char dli_fname[PATH_MAX]; /**< Filename of defining object */
+  void* dli_fbase; /**< Load address of that object */
+  const char* dli_sname; /**< Name of nearest lower symbol */
+  void* dli_saddr; /**< Exact value of nearest symbol */
+};
+typedef struct Dl_info Dl_info;
+
+int dladdr(const void* addr, Dl_info* info) {
+    // only returns filename, FWIW.
+    CHAR tpath[PATH_MAX];
+    MEMORY_BASIC_INFORMATION mbi;
+    char* path;
+    char* tmp;
+    size_t length;
+    int ret = 0;
+
+    if (!info)
+        return 0;
+
+    HMODULE hModule;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &hModule) || hModule == NULL)
+        return 0;
+
+    ret = GetModuleFileNameA(NULL, (LPSTR)&tpath, PATH_MAX);
+    if (!ret)
+        return 0;
+
+    path = tpath;
+
+    length = strlen(path);
+    if (length >= PATH_MAX) {
+        length = PATH_MAX - 1;
+        path[PATH_MAX - 1] = '\0';
+    }
+
+    /* replace '/' by '\' */
+    tmp = path;
+    while (*tmp) {
+        if (*tmp == '\\')
+            *tmp = '/';
+        tmp++;
+    }
+
+    memcpy(info->dli_fname, path, length + 1);
+    info->dli_fbase = hModule;
+    info->dli_sname = NULL;
+    info->dli_saddr = NULL;
+    return 1;
+}
+
+int open(char* pathname, int flags) {
+    return 0;
+}
+
+int close(int fd) {
+  // 使用C运行时的close，它会自动关闭对应的HANDLE
+  return _close(fd);
+}
+
+void* mmap(
+    void* addr,
+    size_t length,
+    int prot,
+    int flags,
+    int fd,
+    off_t offset) {
+    return MAP_FAILED;
+}
+
+int munmap(void* addr, size_t length) {
+  if (!UnmapViewOfFile(addr)) {
+    errno = EINVAL;
+    return -1;
+  }
+  return 0;
+}
+
+#endif
 
 int main()
 {
     printf("!!! g_dummy_weight addr: %p, size: %x.\n", g_dummy_weight, sizeof(g_dummy_weight));
 
     Dl_info dl_info;
-    int ret = dladdr(__func__, &dl_info);
+    int ret = dladdr((const void*)__func__, &dl_info);
     printf("!!! dladdr ret: %d.\n", ret);
     if(ret)
     {
